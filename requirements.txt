@@ -1,0 +1,4 @@
+PySide6>=6.7,<7
+PyInstaller>=6.10,<7
+pytest>=8.0,<9
+pytest-qt>=4.4,<5

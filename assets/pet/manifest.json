@@ -1,0 +1,11 @@
+{
+  "frame_duration_ms": 120,
+  "anchor_bottom_offset": 0,
+  "default_scale": 1.0,
+  "hitbox_padding": 8,
+  "max_display_size": 256,
+  "auto_remove_background": false,
+  "background_tolerance": 48,
+  "drag_hold_ms": 180,
+  "click_pause_ms": 400
+}

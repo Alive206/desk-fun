@@ -1,0 +1,2 @@
+"""Desktop pet application package."""
+

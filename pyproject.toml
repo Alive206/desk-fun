@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "desk-pet"
+version = "0.1.0"
+description = "Lightweight Windows desktop pet MVP built with PySide6."
+requires-python = ">=3.11"
+dependencies = [
+  "PySide6>=6.7,<7",
+]
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "src",
+]
+testpaths = [
+  "tests",
+]
