@@ -20,7 +20,17 @@ class AnimationSpec:
     click_dialogues: list[str] = field(
         default_factory=lambda: ["嗨，我在呢！", "你点到我啦~", "今天也一起玩吧！"]
     )
-    click_dialog_duration_ms: int = 1600
+    click_dialog_duration_ms: int = 1300
+    special_dialog_duration_ms: int = 1800
+    morning_click_dialogues: list[str] = field(
+        default_factory=lambda: ["早安！今天也要元气满满！", "新的一天开始啦~", "早上好，我在陪你。"]
+    )
+    afternoon_click_dialogues: list[str] = field(
+        default_factory=lambda: ["下午好，要不要休息一下？", "工作辛苦啦，我给你打气！", "下午也要稳稳推进~"]
+    )
+    evening_click_dialogues: list[str] = field(
+        default_factory=lambda: ["晚上好，记得放松一下。", "夜晚模式开启，慢慢来。", "辛苦一天啦，我还在。"]
+    )
     happy_click_dialogues: list[str] = field(
         default_factory=lambda: ["好开心！", "这个互动真有趣！", "再来一次吧！"]
     )
@@ -49,6 +59,7 @@ class AppSettings:
     visible: bool = True
     scale: float = DEFAULT_SCALE
     muted: bool = True
+    cursor_sprite_mode: bool = False
 
 
 @dataclass(slots=True)

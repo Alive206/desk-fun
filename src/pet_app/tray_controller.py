@@ -20,6 +20,7 @@ class TrayController:
         self,
         on_toggle_visible: Callable[[], None],
         on_toggle_movement: Callable[[], None],
+        on_toggle_cursor_sprite_mode: Callable[[], None],
         on_reset_position: Callable[[], None],
         on_quit: Callable[[], None],
         on_set_scale_percent: Callable[[int], None],
@@ -27,6 +28,7 @@ class TrayController:
         scale_min_percent: int,
         scale_max_percent: int,
         scale_step_percent: int,
+        cursor_sprite_mode_enabled: bool,
     ) -> None:
         self._tray = QSystemTrayIcon()
         self._tray.setToolTip("DeskPet")
@@ -45,6 +47,11 @@ class TrayController:
         self._toggle_movement_action = QAction("暂停移动")
         self._toggle_movement_action.triggered.connect(on_toggle_movement)
         menu.addAction(self._toggle_movement_action)
+
+        self._toggle_cursor_sprite_action = QAction()
+        self._toggle_cursor_sprite_action.triggered.connect(on_toggle_cursor_sprite_mode)
+        menu.addAction(self._toggle_cursor_sprite_action)
+        self.update_cursor_sprite_mode_label(cursor_sprite_mode_enabled)
 
         scale_menu = menu.addMenu("缩放比例")
         self._scale_value_label = QLabel("")
@@ -88,6 +95,11 @@ class TrayController:
 
     def update_movement_label(self, enabled: bool) -> None:
         self._toggle_movement_action.setText("暂停移动" if enabled else "继续移动")
+
+    def update_cursor_sprite_mode_label(self, enabled: bool) -> None:
+        self._toggle_cursor_sprite_action.setText(
+            "关闭鼠标精灵模式" if enabled else "开启鼠标精灵模式"
+        )
 
     def update_scale_percent(self, percent: int) -> None:
         snapped = self._snap_percent(percent)
