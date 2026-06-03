@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import sys
 from datetime import datetime
 from pathlib import Path
 import shutil
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QSlider,
     QSystemTrayIcon,
+    QMessageBox,
     QToolTip,
     QWidget,
     QWidgetAction,
@@ -36,6 +38,9 @@ from .movement_controller import MovementController
 from .pet_window import PetWindow
 from .settings import save_settings
 from .tray_controller import TrayController
+
+if sys.platform == "win32":
+    import winreg
 
 
 class DesktopPetApp(QObject):
@@ -53,6 +58,7 @@ class DesktopPetApp(QObject):
         self.qt_app = qt_app
         self.settings = settings
         self.sprites = load_sprites()
+        self.settings.autostart_enabled = self._is_autostart_enabled_in_system()
         self.settings.scale = self._snap_scale_percent(
             int(round((self.settings.scale or self.sprites.spec.default_scale) * 100))
         ) / 100.0
@@ -83,6 +89,20 @@ class DesktopPetApp(QObject):
         self._dialog_hide_timer = QTimer(self)
         self._dialog_hide_timer.setSingleShot(True)
         self._dialog_hide_timer.timeout.connect(self._hide_dialogue_bubble)
+        self._stable_dialog_bubble = QLabel()
+        self._stable_dialog_bubble.setWindowFlags(
+            Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+        )
+        self._stable_dialog_bubble.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self._stable_dialog_bubble.setStyleSheet(
+            "QLabel {"
+            "background: rgb(255, 255, 220);"
+            "color: rgb(30, 30, 30);"
+            "border: 1px solid rgb(120, 120, 120);"
+            "border-radius: 6px;"
+            "padding: 4px 8px;"
+            "}"
+        )
         self._special_anim: QPropertyAnimation | None = None
 
         self._mood_points = 55
@@ -143,6 +163,7 @@ class DesktopPetApp(QObject):
             self.tray = TrayController(
                 on_toggle_visible=self.toggle_visible,
                 on_toggle_movement=self.toggle_movement,
+                on_toggle_autostart=self.toggle_autostart,
                 on_toggle_cursor_sprite_mode=self.toggle_cursor_sprite_mode,
                 on_reset_position=self.reset_position,
                 on_quit=self.quit,
@@ -154,11 +175,13 @@ class DesktopPetApp(QObject):
                 cursor_sprite_mode_enabled=self._cursor_sprite_mode,
             )
             self.tray.update_movement_label(self.settings.movement_enabled)
+            self.tray.update_autostart_label(self.settings.autostart_enabled)
             self.tray.show()
 
         self._apply_cursor_sprite_mode(self._cursor_sprite_mode, persist=False)
         self._on_frame_changed(self.animation.current_frame())
         self._apply_visibility()
+        self._maybe_prompt_autostart_once()
         self._ensure_window_visible_on_any_screen()
 
     def _queue_single_click(self) -> None:
@@ -193,6 +216,7 @@ class DesktopPetApp(QObject):
         self._show_dialogue(
             random.choice(self.sprites.spec.special_dialogues),
             duration_ms=self.sprites.spec.special_dialog_duration_ms,
+            stable=True,
         )
         self._play_special_bounce()
         self._click_pause_timer.start(max(400, self.sprites.spec.click_pause_ms))
@@ -237,6 +261,9 @@ class DesktopPetApp(QObject):
 
         pet_action = menu.addAction("摸摸")
         feed_action = menu.addAction("投喂")
+        autostart_action = menu.addAction(
+            "关闭开机自启动" if self.settings.autostart_enabled else "开启开机自启动"
+        )
         cursor_mode_action = menu.addAction(
             "关闭鼠标精灵模式" if self._cursor_sprite_mode else "开启鼠标精灵模式"
         )
@@ -253,6 +280,8 @@ class DesktopPetApp(QObject):
             self._interact_pet()
         elif selected == feed_action:
             self._interact_feed()
+        elif selected == autostart_action:
+            self.toggle_autostart()
         elif selected == cursor_mode_action:
             self.toggle_cursor_sprite_mode()
         elif selected == follow_action:
@@ -340,6 +369,21 @@ class DesktopPetApp(QObject):
         if self.tray:
             self.tray.update_movement_label(self.settings.movement_enabled)
         self._persist_settings()
+
+    def toggle_autostart(self) -> None:
+        target = not self.settings.autostart_enabled
+        if not self._set_autostart_enabled_in_system(target):
+            self._show_dialogue("开机自启动设置失败", duration_ms=1500)
+            return
+        self.settings.autostart_enabled = target
+        self.settings.autostart_prompted = True
+        if self.tray:
+            self.tray.update_autostart_label(target)
+        self._persist_settings()
+        self._show_dialogue(
+            "开机自启动已开启" if target else "开机自启动已关闭",
+            duration_ms=1400,
+        )
 
     def toggle_cursor_sprite_mode(self) -> None:
         self._apply_cursor_sprite_mode(not self._cursor_sprite_mode, persist=True)
@@ -596,7 +640,12 @@ class DesktopPetApp(QObject):
         self.movement.set_clicked_locked(False)
         self._on_base_state_changed(self.movement.base_state())
 
-    def _show_dialogue(self, text: str, duration_ms: int | None = None) -> None:
+    def _show_dialogue(
+        self,
+        text: str,
+        duration_ms: int | None = None,
+        stable: bool = False,
+    ) -> None:
         if not text:
             return
         timeout = (
@@ -605,12 +654,28 @@ class DesktopPetApp(QObject):
             else max(1, int(duration_ms))
         )
         tip_pos = self.window.mapToGlobal(QPoint(self.window.width() // 2, 0))
-        QToolTip.showText(tip_pos, text, self.window, QRect(), timeout)
+        if not stable:
+            QToolTip.showText(tip_pos, text, self.window, QRect(), timeout)
+            self._stable_dialog_bubble.hide()
+            self._dialog_hide_timer.start(timeout)
+            return
+
+        bounds = self._movement_bounds()
+        self._stable_dialog_bubble.setText(text)
+        self._stable_dialog_bubble.adjustSize()
+        x = tip_pos.x() - self._stable_dialog_bubble.width() // 2
+        y = tip_pos.y() - self._stable_dialog_bubble.height() - 14
+        x = min(max(x, bounds.left() + 8), bounds.right() - self._stable_dialog_bubble.width() - 8)
+        y = min(max(y, bounds.top() + 8), bounds.bottom() - self._stable_dialog_bubble.height() - 8)
+        self._stable_dialog_bubble.move(x, y)
+        self._stable_dialog_bubble.show()
+        self._stable_dialog_bubble.raise_()
         self._dialog_hide_timer.start(timeout)
 
     def _hide_dialogue_bubble(self) -> None:
         self._dialog_hide_timer.stop()
         QToolTip.hideText()
+        self._stable_dialog_bubble.hide()
 
     def _register_delete_combo(self) -> int:
         self._delete_combo_count += 1
@@ -660,6 +725,74 @@ class DesktopPetApp(QObject):
             "提醒：喝口水，休息 1 分钟。",
         ]
         self._show_dialogue(random.choice(lines), duration_ms=1600)
+
+    def _maybe_prompt_autostart_once(self) -> None:
+        if self.settings.autostart_prompted:
+            return
+        if sys.platform != "win32":
+            self.settings.autostart_prompted = True
+            self._persist_settings()
+            return
+
+        answer = QMessageBox.question(
+            self.window,
+            "DeskPet",
+            "是否在开机时自动启动 DeskPet？\n你可以随时在托盘菜单里关闭。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        enabled = answer == QMessageBox.Yes
+        if enabled:
+            self._set_autostart_enabled_in_system(True)
+        self.settings.autostart_enabled = self._is_autostart_enabled_in_system()
+        self.settings.autostart_prompted = True
+        if self.tray:
+            self.tray.update_autostart_label(self.settings.autostart_enabled)
+        self._persist_settings()
+
+    def _is_autostart_enabled_in_system(self) -> bool:
+        if sys.platform != "win32":
+            return False
+        value_name = "DeskPet"
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Run",
+                0,
+                winreg.KEY_READ,
+            ) as key:
+                value, _ = winreg.QueryValueEx(key, value_name)
+                return bool(value)
+        except OSError:
+            return False
+
+    def _set_autostart_enabled_in_system(self, enabled: bool) -> bool:
+        if sys.platform != "win32":
+            return False
+        value_name = "DeskPet"
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Run",
+                0,
+                winreg.KEY_SET_VALUE,
+            ) as key:
+                if enabled:
+                    winreg.SetValueEx(key, value_name, 0, winreg.REG_SZ, self._autostart_command())
+                else:
+                    try:
+                        winreg.DeleteValue(key, value_name)
+                    except OSError:
+                        pass
+            return True
+        except OSError:
+            return False
+
+    def _autostart_command(self) -> str:
+        if getattr(sys, "frozen", False):
+            return f'"{Path(sys.executable)}"'
+        main_py = Path(__file__).resolve().parents[2] / "main.py"
+        return f'"{Path(sys.executable)}" "{main_py}"'
 
     def _change_mood(self, delta: int) -> None:
         self._mood_points = max(0, min(100, self._mood_points + delta))

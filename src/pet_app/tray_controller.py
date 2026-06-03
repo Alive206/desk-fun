@@ -20,6 +20,7 @@ class TrayController:
         self,
         on_toggle_visible: Callable[[], None],
         on_toggle_movement: Callable[[], None],
+        on_toggle_autostart: Callable[[], None],
         on_toggle_cursor_sprite_mode: Callable[[], None],
         on_reset_position: Callable[[], None],
         on_quit: Callable[[], None],
@@ -47,6 +48,11 @@ class TrayController:
         self._toggle_movement_action = QAction("暂停移动")
         self._toggle_movement_action.triggered.connect(on_toggle_movement)
         menu.addAction(self._toggle_movement_action)
+
+        self._toggle_autostart_action = QAction()
+        self._toggle_autostart_action.triggered.connect(on_toggle_autostart)
+        menu.addAction(self._toggle_autostart_action)
+        self.update_autostart_label(False)
 
         self._toggle_cursor_sprite_action = QAction()
         self._toggle_cursor_sprite_action.triggered.connect(on_toggle_cursor_sprite_mode)
@@ -99,6 +105,11 @@ class TrayController:
     def update_cursor_sprite_mode_label(self, enabled: bool) -> None:
         self._toggle_cursor_sprite_action.setText(
             "关闭鼠标精灵模式" if enabled else "开启鼠标精灵模式"
+        )
+
+    def update_autostart_label(self, enabled: bool) -> None:
+        self._toggle_autostart_action.setText(
+            "关闭开机自启动" if enabled else "开启开机自启动"
         )
 
     def update_scale_percent(self, percent: int) -> None:
