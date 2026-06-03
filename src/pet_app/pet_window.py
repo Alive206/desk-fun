@@ -1,7 +1,15 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, Qt, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QMouseEvent, QPixmap
+from PySide6.QtGui import (
+    QCloseEvent,
+    QDragEnterEvent,
+    QDragLeaveEvent,
+    QDragMoveEvent,
+    QDropEvent,
+    QMouseEvent,
+    QPixmap,
+)
 from PySide6.QtWidgets import QWidget
 
 
@@ -9,6 +17,8 @@ class PetWindow(QWidget):
     clicked = Signal()
     double_clicked = Signal()
     right_clicked = Signal(QPoint)
+    files_dropped = Signal(list)
+    files_drag_hover = Signal(bool)
     drag_started = Signal()
     drag_moved = Signal(int, int)
     drag_finished = Signal()
@@ -41,6 +51,7 @@ class PetWindow(QWidget):
         self.setWindowFlags(
             Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint
         )
+        self.setAcceptDrops(True)
         self.setFocusPolicy(Qt.NoFocus)
         self.resize(128, 128)
 
@@ -143,6 +154,37 @@ class PetWindow(QWidget):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self.close_requested.emit(event)
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if event.mimeData().hasUrls():
+            event.setDropAction(Qt.MoveAction)
+            event.acceptProposedAction()
+            self.files_drag_hover.emit(True)
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        if event.mimeData().hasUrls():
+            event.setDropAction(Qt.MoveAction)
+            event.accept()
+            self.files_drag_hover.emit(True)
+            return
+        super().dragMoveEvent(event)
+
+    def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
+        self.files_drag_hover.emit(False)
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        urls = event.mimeData().urls()
+        paths = [url.toLocalFile() for url in urls if url.isLocalFile()]
+        if paths:
+            event.setDropAction(Qt.MoveAction)
+            self.files_dropped.emit(paths)
+            self.files_drag_hover.emit(False)
+            event.acceptProposedAction()
+            return
+        super().dropEvent(event)
 
     def _activate_drag(self) -> None:
         if not self._pressing or self._dragging:

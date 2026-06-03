@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import random
 from datetime import datetime
+from pathlib import Path
+import shutil
 
 from PySide6.QtCore import (
     QAbstractAnimation,
@@ -109,6 +111,8 @@ class DesktopPetApp(QObject):
         self.window.clicked.connect(self._queue_single_click)
         self.window.double_clicked.connect(self.on_double_clicked)
         self.window.right_clicked.connect(self.on_right_clicked)
+        self.window.files_dropped.connect(self.on_files_dropped)
+        self.window.files_drag_hover.connect(self.on_files_drag_hover)
         self.window.drag_started.connect(self.on_drag_started)
         self.window.drag_moved.connect(self.on_drag_moved)
         self.window.drag_finished.connect(self.on_drag_finished)
@@ -247,6 +251,33 @@ class DesktopPetApp(QObject):
         self._active_screen_geometry = self._pick_screen_for_window()
         self._persist_position()
         self._on_base_state_changed(self.movement.base_state())
+
+    def on_files_dropped(self, paths: list[str]) -> None:
+        deleted = 0
+        failed = 0
+        for raw_path in paths:
+            file_path = Path(raw_path)
+            if not file_path.exists():
+                failed += 1
+                continue
+            try:
+                if file_path.is_dir():
+                    shutil.rmtree(file_path)
+                else:
+                    file_path.unlink()
+                deleted += 1
+            except OSError:
+                failed += 1
+
+        self._hide_dialogue_bubble()
+        if failed > 0:
+            self._show_dialogue(f"删除失败 {failed} 个", duration_ms=1500)
+
+    def on_files_drag_hover(self, hovering: bool) -> None:
+        if hovering:
+            self._show_dialogue("⚠ 松手永久删除", duration_ms=600000)
+        else:
+            self._hide_dialogue_bubble()
 
     def toggle_visible(self) -> None:
         self.settings.visible = not self.window.isVisible()
