@@ -7,6 +7,8 @@ from PySide6.QtWidgets import QWidget
 
 class PetWindow(QWidget):
     clicked = Signal()
+    double_clicked = Signal()
+    right_clicked = Signal(QPoint)
     drag_started = Signal()
     drag_moved = Signal(int, int)
     drag_finished = Signal()
@@ -29,6 +31,7 @@ class PetWindow(QWidget):
         self._drag_offset = QPoint()
         self._press_global = QPoint()
         self._drag_distance = 0
+        self._suppress_next_click = False
 
         self._drag_timer = QTimer(self)
         self._drag_timer.setSingleShot(True)
@@ -44,10 +47,11 @@ class PetWindow(QWidget):
     def set_frame(self, frame: QPixmap, scale: float = 1.0) -> None:
         self.current_frame = frame
         if not frame.isNull():
-            width = max(1, int(frame.width() * scale))
-            height = max(1, int(frame.height() * scale))
-            fitted_width, fitted_height = self._fit_to_max_size(width, height)
-            self.resize(fitted_width, fitted_height)
+            # First fit the raw frame to base size, then apply user scale steps.
+            base_width, base_height = self._fit_to_max_size(frame.width(), frame.height())
+            width = max(1, int(base_width * scale))
+            height = max(1, int(base_height * scale))
+            self.resize(width, height)
         self.update()
 
     def _fit_to_max_size(self, width: int, height: int) -> tuple[int, int]:
@@ -94,6 +98,11 @@ class PetWindow(QWidget):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.RightButton:
+            self.right_clicked.emit(event.globalPosition().toPoint())
+            event.accept()
+            return
+
         if event.button() == Qt.LeftButton and self._pressing:
             self._drag_timer.stop()
             was_dragging = self._dragging
@@ -105,11 +114,21 @@ class PetWindow(QWidget):
                 self._drag_distance,
                 (event.globalPosition().toPoint() - self._press_global).manhattanLength(),
             )
-            if not was_dragging and release_distance < 6:
+            if self._suppress_next_click:
+                self._suppress_next_click = False
+            elif not was_dragging and release_distance < 6:
                 self.clicked.emit()
             event.accept()
             return
         super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.LeftButton:
+            self._suppress_next_click = True
+            self.double_clicked.emit()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
     def paintEvent(self, event) -> None:
         if self.current_frame.isNull():

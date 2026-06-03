@@ -24,6 +24,15 @@ from .models import AnimationSpec, SpriteSet
 from .resource_path import get_pet_assets_dir
 
 
+def _parse_string_list(raw_value, fallback: list[str]) -> list[str]:
+    if isinstance(raw_value, list):
+        parsed = [str(item).strip() for item in raw_value if str(item).strip()]
+    else:
+        single = str(raw_value).strip() if raw_value is not None else ""
+        parsed = [single] if single else []
+    return parsed or fallback
+
+
 def _load_manifest(assets_dir: Path) -> AnimationSpec:
     manifest_path = assets_dir / "manifest.json"
     if not manifest_path.exists():
@@ -37,9 +46,50 @@ def _load_manifest(assets_dir: Path) -> AnimationSpec:
             background_tolerance=48,
             drag_hold_ms=180,
             click_pause_ms=400,
+            click_dialogues=["嗨，我在呢！", "你点到我啦~", "今天也一起玩吧！"],
+            click_dialog_duration_ms=1600,
+            happy_click_dialogues=["好开心！", "这个互动真有趣！", "再来一次吧！"],
+            bored_click_dialogues=[
+                "唔，有点无聊。",
+                "我一直陪着你。",
+                "我们找点事情做吧。",
+            ],
+            sleepy_click_dialogues=["呼噜呼噜……", "我有点困了。", "轻轻点我就好。"],
+            pet_dialogues=["摸摸真舒服。", "收到你的摸摸啦！", "心情变好了！"],
+            feed_dialogues=["好吃！", "开饭时间到！", "能量恢复啦！"],
+            special_dialogues=["看我的！", "特殊动作启动！", "蹦一下！"],
         )
 
     raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    click_dialogues = _parse_string_list(
+        raw.get("click_dialogues"),
+        ["嗨，我在呢！", "你点到我啦~", "今天也一起玩吧！"],
+    )
+    happy_click_dialogues = _parse_string_list(
+        raw.get("happy_click_dialogues"),
+        ["好开心！", "这个互动真有趣！", "再来一次吧！"],
+    )
+    bored_click_dialogues = _parse_string_list(
+        raw.get("bored_click_dialogues"),
+        ["唔，有点无聊。", "我一直陪着你。", "我们找点事情做吧。"],
+    )
+    sleepy_click_dialogues = _parse_string_list(
+        raw.get("sleepy_click_dialogues"),
+        ["呼噜呼噜……", "我有点困了。", "轻轻点我就好。"],
+    )
+    pet_dialogues = _parse_string_list(
+        raw.get("pet_dialogues"),
+        ["摸摸真舒服。", "收到你的摸摸啦！", "心情变好了！"],
+    )
+    feed_dialogues = _parse_string_list(
+        raw.get("feed_dialogues"),
+        ["好吃！", "开饭时间到！", "能量恢复啦！"],
+    )
+    special_dialogues = _parse_string_list(
+        raw.get("special_dialogues"),
+        ["看我的！", "特殊动作启动！", "蹦一下！"],
+    )
+
     return AnimationSpec(
         frame_duration_ms=int(raw.get("frame_duration_ms", DEFAULT_FRAME_DURATION_MS)),
         anchor_bottom_offset=int(
@@ -52,6 +102,14 @@ def _load_manifest(assets_dir: Path) -> AnimationSpec:
         background_tolerance=max(0, int(raw.get("background_tolerance", 48))),
         drag_hold_ms=max(0, int(raw.get("drag_hold_ms", 180))),
         click_pause_ms=max(0, int(raw.get("click_pause_ms", 400))),
+        click_dialogues=click_dialogues,
+        click_dialog_duration_ms=max(1, int(raw.get("click_dialog_duration_ms", 1600))),
+        happy_click_dialogues=happy_click_dialogues,
+        bored_click_dialogues=bored_click_dialogues,
+        sleepy_click_dialogues=sleepy_click_dialogues,
+        pet_dialogues=pet_dialogues,
+        feed_dialogues=feed_dialogues,
+        special_dialogues=special_dialogues,
     )
 
 

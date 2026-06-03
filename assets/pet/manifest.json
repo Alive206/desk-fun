@@ -7,5 +7,41 @@
   "auto_remove_background": false,
   "background_tolerance": 48,
   "drag_hold_ms": 180,
-  "click_pause_ms": 400
+  "click_pause_ms": 2000,
+  "click_dialog_duration_ms": 1600,
+  "click_dialogues": [
+    "嗨，我在呢！",
+    "你点到我啦~",
+    "今天也一起玩吧！"
+  ],
+  "happy_click_dialogues": [
+    "好开心！",
+    "这个互动真有趣！",
+    "再来一次吧！"
+  ],
+  "bored_click_dialogues": [
+    "唔，有点无聊。",
+    "我一直陪着你。",
+    "我们找点事情做吧。"
+  ],
+  "sleepy_click_dialogues": [
+    "呼噜呼噜……",
+    "我有点困了。",
+    "轻轻点我就好。"
+  ],
+  "pet_dialogues": [
+    "摸摸真舒服。",
+    "收到你的摸摸啦！",
+    "心情变好了！"
+  ],
+  "feed_dialogues": [
+    "好吃！",
+    "开饭时间到！",
+    "能量恢复啦！"
+  ],
+  "special_dialogues": [
+    "看我的！",
+    "特殊动作启动！",
+    "蹦一下！"
+  ]
 }
