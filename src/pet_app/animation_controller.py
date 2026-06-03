@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import random
 from collections.abc import Callable
 
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QPixmap
 
-from .constants import CLICKED, DRAGGED, IDLE
+from .constants import CLICKED, DRAGGED, IDLE, WALK_LEFT, WALK_RIGHT
 from .models import SpriteSet
 
 
@@ -27,6 +28,10 @@ class AnimationController(QObject):
         self._timer.timeout.connect(self._advance_frame)
         if sprite_set.spec.enable_frame_animation:
             self._timer.start()
+        else:
+            idle_frames = self._get_frames(IDLE)
+            if idle_frames:
+                self._frame_index = random.randrange(len(idle_frames))
 
         self.emit_current_frame()
 
@@ -48,10 +53,17 @@ class AnimationController(QObject):
 
     def set_state(self, state: str) -> None:
         self._frozen = False
-        if state == self._state and self._frame_index == 0:
+        if state == self._state:
             return
         self._state = state
-        self._frame_index = 0
+        if (
+            not self._sprite_set.spec.enable_frame_animation
+            and state in (IDLE, WALK_LEFT, WALK_RIGHT)
+        ):
+            frames = self._get_frames(state)
+            self._frame_index = random.randrange(len(frames)) if frames else 0
+        else:
+            self._frame_index = 0
         self.emit_current_frame()
 
     def play_transient(self, state: str) -> None:

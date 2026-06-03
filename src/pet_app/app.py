@@ -8,6 +8,7 @@ from PySide6.QtCore import (
     QPropertyAnimation,
     QObject,
     QPoint,
+    QRect,
     Qt,
     QTimer,
 )
@@ -26,7 +27,7 @@ from PySide6.QtWidgets import (
 
 from .animation_controller import AnimationController
 from .asset_loader import load_sprites
-from .constants import CLICKED, DRAGGED, IDLE
+from .constants import CLICKED, DRAGGED, IDLE, WALK_LEFT, WALK_RIGHT
 from .models import AppSettings
 from .movement_controller import MovementController
 from .pet_window import PetWindow
@@ -79,6 +80,7 @@ class DesktopPetApp(QObject):
         self._mood_decay_timer.setInterval(5000)
         self._mood_decay_timer.timeout.connect(self._decay_mood)
         self._mood_decay_timer.start()
+        self._active_screen_geometry: QRect | None = None
 
         self.window.clicked.connect(self.on_clicked)
         self.window.double_clicked.connect(self.on_double_clicked)
@@ -194,6 +196,7 @@ class DesktopPetApp(QObject):
 
     def on_drag_finished(self) -> None:
         self.movement.set_dragging(False)
+        self._active_screen_geometry = self._pick_screen_for_window()
         self._persist_position()
         self._on_base_state_changed(self.movement.base_state())
 
@@ -215,7 +218,7 @@ class DesktopPetApp(QObject):
     def reset_position(self) -> None:
         self._click_pause_timer.stop()
         self.movement.set_clicked_locked(False)
-        bounds = self.qt_app.primaryScreen().availableGeometry()
+        bounds = self._movement_bounds()
         x = bounds.right() - self.window.width() - 48
         y = bounds.bottom() - self.window.height()
         self.window.move(x, y)
@@ -252,15 +255,28 @@ class DesktopPetApp(QObject):
     def _tick(self) -> None:
         if self._special_anim and self._special_anim.state() == QAbstractAnimation.Running:
             return
-        bounds = self.qt_app.primaryScreen().availableGeometry()
+        if self.movement.dragging:
+            # Do not clamp while user is dragging; allow free cross-screen drag.
+            self.settings.position_x = self.window.x()
+            self.settings.position_y = self.window.y()
+            return
+        if self._active_screen_geometry is None:
+            self._active_screen_geometry = self._pick_screen_for_window()
+
+        self._maybe_handoff_screen()
+        bounds = self._active_screen_geometry or self._movement_bounds()
         snapshot = self.movement.tick(bounds, self.window.width())
-        clamped_y = min(
+        target_x = min(
+            max(snapshot.x, bounds.left()),
+            bounds.right() - self.window.width() + 1,
+        )
+        target_y = min(
             max(self.window.y(), bounds.top()),
             bounds.bottom() - self.window.height() + 1,
         )
-        self.window.move(snapshot.x, clamped_y)
-        self.settings.position_x = snapshot.x
-        self.settings.position_y = clamped_y
+        self.window.move(target_x, target_y)
+        self.settings.position_x = target_x
+        self.settings.position_y = target_y
 
     def _apply_visibility(self) -> None:
         if self.settings.visible:
@@ -296,6 +312,85 @@ class DesktopPetApp(QObject):
         clamped = max(self.SCALE_MIN_PERCENT, min(self.SCALE_MAX_PERCENT, int(percent)))
         steps = round((clamped - self.SCALE_MIN_PERCENT) / self.SCALE_STEP_PERCENT)
         return self.SCALE_MIN_PERCENT + steps * self.SCALE_STEP_PERCENT
+
+    def _movement_bounds(self) -> QRect:
+        screens = self.qt_app.screens()
+        if not screens:
+            return self.qt_app.primaryScreen().availableGeometry()
+
+        union = QRect(screens[0].availableGeometry())
+        for screen in screens[1:]:
+            union = union.united(screen.availableGeometry())
+        return union
+
+    def _pick_screen_for_window(self) -> QRect:
+        screens = self.qt_app.screens()
+        if not screens:
+            return self.qt_app.primaryScreen().availableGeometry()
+
+        center = self.window.geometry().center()
+        containing = [screen.availableGeometry() for screen in screens if screen.availableGeometry().contains(center)]
+        if containing:
+            return QRect(containing[0])
+
+        return QRect(
+            min(
+                (screen.availableGeometry() for screen in screens),
+                key=lambda g: abs(g.center().x() - center.x()) + abs(g.center().y() - center.y()),
+            )
+        )
+
+    def _maybe_handoff_screen(self) -> None:
+        if not self._active_screen_geometry:
+            return
+
+        current = self._active_screen_geometry
+        width = self.window.width()
+        height = self.window.height()
+        x = self.window.x()
+        y = self.window.y()
+        direction = self.movement.direction
+
+        target: QRect | None = None
+        if direction == WALK_RIGHT and x + width >= current.right():
+            target = self._find_neighbor_screen(current, WALK_RIGHT, y, height)
+            if target:
+                x = target.left()
+        elif direction == WALK_LEFT and x <= current.left():
+            target = self._find_neighbor_screen(current, WALK_LEFT, y, height)
+            if target:
+                x = target.right() - width + 1
+
+        if not target:
+            return
+
+        y = min(max(y, target.top()), target.bottom() - height + 1)
+        self._active_screen_geometry = target
+        self.window.move(x, y)
+        self.movement.move_to(x, y)
+
+    def _find_neighbor_screen(
+        self,
+        current: QRect,
+        direction: str,
+        y: int,
+        height: int,
+    ) -> QRect | None:
+        screens = [screen.availableGeometry() for screen in self.qt_app.screens()]
+        if not screens:
+            return None
+
+        vertical_overlap = lambda g: min(y + height, g.bottom() + 1) - max(y, g.top()) > 0
+        if direction == WALK_RIGHT:
+            candidates = [g for g in screens if g.left() > current.right() and vertical_overlap(g)]
+            if not candidates:
+                candidates = [g for g in screens if g.left() > current.right()]
+            return min(candidates, key=lambda g: g.left(), default=None)
+
+        candidates = [g for g in screens if g.right() < current.left() and vertical_overlap(g)]
+        if not candidates:
+            candidates = [g for g in screens if g.right() < current.left()]
+        return max(candidates, key=lambda g: g.right(), default=None)
 
     def _release_clicked_state(self) -> None:
         if not self.movement.clicked_locked:

@@ -5,7 +5,7 @@
   "default_scale": 1.0,
   "hitbox_padding": 8,
   "max_display_size": 256,
-  "auto_remove_background": false,
+  "auto_remove_background": true,
   "background_tolerance": 48,
   "drag_hold_ms": 180,
   "click_pause_ms": 2000,
