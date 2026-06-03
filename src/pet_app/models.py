@@ -8,6 +8,7 @@ from .constants import DEFAULT_FRAME_DURATION_MS, DEFAULT_SCALE
 @dataclass(slots=True)
 class AnimationSpec:
     frame_duration_ms: int = DEFAULT_FRAME_DURATION_MS
+    enable_frame_animation: bool = False
     anchor_bottom_offset: int = 0
     default_scale: float = DEFAULT_SCALE
     hitbox_padding: int = 8

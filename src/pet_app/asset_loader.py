@@ -38,6 +38,7 @@ def _load_manifest(assets_dir: Path) -> AnimationSpec:
     if not manifest_path.exists():
         return AnimationSpec(
             frame_duration_ms=DEFAULT_FRAME_DURATION_MS,
+            enable_frame_animation=False,
             anchor_bottom_offset=DEFAULT_ANCHOR_BOTTOM_OFFSET,
             default_scale=DEFAULT_SCALE,
             hitbox_padding=DEFAULT_HITBOX_PADDING,
@@ -92,6 +93,7 @@ def _load_manifest(assets_dir: Path) -> AnimationSpec:
 
     return AnimationSpec(
         frame_duration_ms=int(raw.get("frame_duration_ms", DEFAULT_FRAME_DURATION_MS)),
+        enable_frame_animation=bool(raw.get("enable_frame_animation", False)),
         anchor_bottom_offset=int(
             raw.get("anchor_bottom_offset", DEFAULT_ANCHOR_BOTTOM_OFFSET)
         ),

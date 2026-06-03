@@ -1,5 +1,6 @@
 {
   "frame_duration_ms": 120,
+  "enable_frame_animation": false,
   "anchor_bottom_offset": 0,
   "default_scale": 1.0,
   "hitbox_padding": 8,

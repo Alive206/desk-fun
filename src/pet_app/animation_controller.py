@@ -25,7 +25,8 @@ class AnimationController(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(sprite_set.spec.frame_duration_ms)
         self._timer.timeout.connect(self._advance_frame)
-        self._timer.start()
+        if sprite_set.spec.enable_frame_animation:
+            self._timer.start()
 
         self.emit_current_frame()
 
@@ -80,6 +81,8 @@ class AnimationController(QObject):
         self.emit_current_frame()
 
     def _advance_frame(self) -> None:
+        if not self._sprite_set.spec.enable_frame_animation:
+            return
         if self._frozen:
             return
         frames = self._get_frames(self._state)
