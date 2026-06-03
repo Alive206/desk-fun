@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QSlider,
     QSystemTrayIcon,
+    QToolTip,
     QWidget,
     QWidgetAction,
 )
@@ -99,14 +100,25 @@ class DesktopPetApp(QObject):
         self._follow_mouse_timer = QTimer(self)
         self._follow_mouse_timer.setSingleShot(True)
         self._follow_mouse_timer.timeout.connect(self._stop_follow_mouse)
+        self._pending_delete_batch: list[tuple[Path, Path]] = []
+        self._pending_delete_timer = QTimer(self)
+        self._pending_delete_timer.setSingleShot(True)
+        self._pending_delete_timer.setInterval(5000)
+        self._pending_delete_timer.timeout.connect(self._finalize_pending_delete_batch)
+        self._delete_combo_count = 0
+        self._delete_combo_timer = QTimer(self)
+        self._delete_combo_timer.setSingleShot(True)
+        self._delete_combo_timer.setInterval(3000)
+        self._delete_combo_timer.timeout.connect(self._reset_delete_combo)
+        self.settings.total_deleted_count = max(0, int(self.settings.total_deleted_count))
+        self.settings.hourly_reminder_enabled = bool(self.settings.hourly_reminder_enabled)
+        self._last_hourly_reminder_hour: int | None = None
+        self._hourly_reminder_timer = QTimer(self)
+        self._hourly_reminder_timer.setInterval(30000)
+        self._hourly_reminder_timer.timeout.connect(self._check_hourly_reminder)
+        self._hourly_reminder_timer.start()
         self._cursor_sprite_mode = bool(self.settings.cursor_sprite_mode)
         self._movement_enabled_before_cursor_mode = self.settings.movement_enabled
-        self._dialog_bubble = QLabel()
-        self._dialog_bubble.setWindowFlags(
-            Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
-        )
-        self._dialog_bubble.setAttribute(Qt.WA_ShowWithoutActivating, True)
-        self._apply_dialog_bubble_theme()
 
         self.window.clicked.connect(self._queue_single_click)
         self.window.double_clicked.connect(self.on_double_clicked)
@@ -123,6 +135,8 @@ class DesktopPetApp(QObject):
         self._timer.setInterval(self.movement.tick_ms)
         self._timer.timeout.connect(self._tick)
         self._timer.start()
+        self.qt_app.screenAdded.connect(self._on_screens_changed)
+        self.qt_app.screenRemoved.connect(self._on_screens_changed)
 
         self.tray: TrayController | None = None
         if enable_tray and QSystemTrayIcon.isSystemTrayAvailable():
@@ -145,6 +159,7 @@ class DesktopPetApp(QObject):
         self._apply_cursor_sprite_mode(self._cursor_sprite_mode, persist=False)
         self._on_frame_changed(self.animation.current_frame())
         self._apply_visibility()
+        self._ensure_window_visible_on_any_screen()
 
     def _queue_single_click(self) -> None:
         self._single_click_timer.start()
@@ -188,6 +203,8 @@ class DesktopPetApp(QObject):
             f"当前情绪：{self._mood_state_label()} ({self._mood_points})"
         )
         mood_action.setEnabled(False)
+        stats_action = menu.addAction(f"累计吞噬：{self.settings.total_deleted_count}")
+        stats_action.setEnabled(False)
         menu.addSeparator()
 
         scale_menu = menu.addMenu("缩放比例")
@@ -226,6 +243,11 @@ class DesktopPetApp(QObject):
         follow_action = menu.addAction(
             "结束跟随" if self._follow_mouse_active else "跟随我（5秒）"
         )
+        undo_action = menu.addAction("撤销上次删除（5秒内）")
+        undo_action.setEnabled(bool(self._pending_delete_batch))
+        reminder_action = menu.addAction(
+            "关闭整点提醒" if self.settings.hourly_reminder_enabled else "开启整点提醒"
+        )
         selected = menu.exec(global_pos)
         if selected == pet_action:
             self._interact_pet()
@@ -235,6 +257,10 @@ class DesktopPetApp(QObject):
             self.toggle_cursor_sprite_mode()
         elif selected == follow_action:
             self._toggle_follow_mouse()
+        elif selected == undo_action:
+            self.undo_last_delete()
+        elif selected == reminder_action:
+            self.toggle_hourly_reminder()
 
     def on_drag_started(self) -> None:
         self._click_pause_timer.stop()
@@ -253,23 +279,38 @@ class DesktopPetApp(QObject):
         self._on_base_state_changed(self.movement.base_state())
 
     def on_files_dropped(self, paths: list[str]) -> None:
+        if self._pending_delete_batch:
+            self._finalize_pending_delete_batch()
+        self._hide_dialogue_bubble()
+
         deleted = 0
         failed = 0
+        moved_batch: list[tuple[Path, Path]] = []
         for raw_path in paths:
             file_path = Path(raw_path)
             if not file_path.exists():
                 failed += 1
                 continue
             try:
-                if file_path.is_dir():
-                    shutil.rmtree(file_path)
-                else:
-                    file_path.unlink()
+                staged_path = self._next_pending_trash_path(file_path.name)
+                shutil.move(str(file_path), str(staged_path))
+                moved_batch.append((file_path, staged_path))
                 deleted += 1
             except OSError:
                 failed += 1
 
-        self._hide_dialogue_bubble()
+        if moved_batch:
+            self._pending_delete_batch = moved_batch
+            self._pending_delete_timer.start()
+            self.settings.total_deleted_count += deleted
+            combo = self._register_delete_combo()
+            self._persist_settings()
+            if combo >= 2:
+                self._show_dialogue(
+                    f"吞噬连击 x{combo}！累计 {self.settings.total_deleted_count}",
+                    duration_ms=1600,
+                )
+
         if failed > 0:
             self._show_dialogue(f"删除失败 {failed} 个", duration_ms=1500)
 
@@ -303,6 +344,45 @@ class DesktopPetApp(QObject):
     def toggle_cursor_sprite_mode(self) -> None:
         self._apply_cursor_sprite_mode(not self._cursor_sprite_mode, persist=True)
 
+    def toggle_hourly_reminder(self) -> None:
+        self.settings.hourly_reminder_enabled = not self.settings.hourly_reminder_enabled
+        self._last_hourly_reminder_hour = None
+        self._persist_settings()
+        self._show_dialogue(
+            "整点提醒已开启" if self.settings.hourly_reminder_enabled else "整点提醒已关闭",
+            duration_ms=1400,
+        )
+
+    def undo_last_delete(self) -> None:
+        if not self._pending_delete_batch:
+            self._show_dialogue("没有可撤销的删除", duration_ms=1300)
+            return
+
+        restored = 0
+        failed = 0
+        for original_path, staged_path in self._pending_delete_batch:
+            if not staged_path.exists():
+                failed += 1
+                continue
+            target_path = original_path
+            if target_path.exists():
+                target_path = target_path.with_name(f"{target_path.stem}_restored{target_path.suffix}")
+            try:
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(staged_path), str(target_path))
+                restored += 1
+            except OSError:
+                failed += 1
+
+        self._pending_delete_timer.stop()
+        self._pending_delete_batch = []
+        if restored > 0:
+            self.settings.total_deleted_count = max(0, self.settings.total_deleted_count - restored)
+            self._persist_settings()
+            self._show_dialogue(f"已撤销 {restored} 个", duration_ms=1500)
+            return
+        self._show_dialogue(f"撤销失败 {failed} 个", duration_ms=1400)
+
     def reset_position(self) -> None:
         self._click_pause_timer.stop()
         self.movement.set_clicked_locked(False)
@@ -329,6 +409,7 @@ class DesktopPetApp(QObject):
         self._persist_settings()
 
     def quit(self) -> None:
+        self._finalize_pending_delete_batch()
         self._apply_cursor_sprite_mode(False, persist=False)
         self._hide_dialogue_bubble()
         self._persist_settings()
@@ -345,6 +426,7 @@ class DesktopPetApp(QObject):
     def _tick(self) -> None:
         if self._special_anim and self._special_anim.state() == QAbstractAnimation.Running:
             return
+        self._ensure_window_visible_on_any_screen()
         if self._cursor_sprite_mode:
             self._cursor_sprite_follow_step()
             return
@@ -418,6 +500,26 @@ class DesktopPetApp(QObject):
         for screen in screens[1:]:
             union = union.united(screen.availableGeometry())
         return union
+
+    def _on_screens_changed(self, _screen=None) -> None:
+        self._active_screen_geometry = None
+        self._ensure_window_visible_on_any_screen()
+
+    def _ensure_window_visible_on_any_screen(self) -> None:
+        rect = self.window.frameGeometry()
+        if any(rect.intersects(screen.availableGeometry()) for screen in self.qt_app.screens()):
+            return
+
+        primary = self.qt_app.primaryScreen()
+        bounds = primary.availableGeometry() if primary else self._movement_bounds()
+        x = bounds.right() - self.window.width() - 48
+        y = bounds.bottom() - self.window.height()
+        x = min(max(x, bounds.left()), bounds.right() - self.window.width() + 1)
+        y = min(max(y, bounds.top()), bounds.bottom() - self.window.height() + 1)
+        self.window.move(x, y)
+        self.movement.move_to(x, y)
+        self.settings.position_x = x
+        self.settings.position_y = y
 
     def _pick_screen_for_window(self) -> QRect:
         screens = self.qt_app.screens()
@@ -497,53 +599,67 @@ class DesktopPetApp(QObject):
     def _show_dialogue(self, text: str, duration_ms: int | None = None) -> None:
         if not text:
             return
-        self._apply_dialog_bubble_theme()
         timeout = (
             self.sprites.spec.click_dialog_duration_ms
             if duration_ms is None
             else max(1, int(duration_ms))
         )
-        self._dialog_bubble.setText(text)
-        self._dialog_bubble.adjustSize()
         tip_pos = self.window.mapToGlobal(QPoint(self.window.width() // 2, 0))
-        x = tip_pos.x() - self._dialog_bubble.width() // 2
-        y = tip_pos.y() - self._dialog_bubble.height() - 14
-        bounds = self._movement_bounds()
-        x = min(max(x, bounds.left()), bounds.right() - self._dialog_bubble.width() + 1)
-        y = min(max(y, bounds.top()), bounds.bottom() - self._dialog_bubble.height() + 1)
-        self._dialog_bubble.move(x, y)
-        self._dialog_bubble.show()
-        self._dialog_bubble.raise_()
+        QToolTip.showText(tip_pos, text, self.window, QRect(), timeout)
         self._dialog_hide_timer.start(timeout)
 
     def _hide_dialogue_bubble(self) -> None:
         self._dialog_hide_timer.stop()
-        self._dialog_bubble.hide()
+        QToolTip.hideText()
 
-    def _apply_dialog_bubble_theme(self) -> None:
-        window_color = self.qt_app.palette().window().color()
-        is_dark = window_color.lightness() < 128
-        if is_dark:
-            style = (
-                "QLabel {"
-                "background: rgba(30, 30, 30, 220);"
-                "color: white;"
-                "border: 1px solid rgba(255, 255, 255, 60);"
-                "border-radius: 8px;"
-                "padding: 6px 10px;"
-                "}"
-            )
-        else:
-            style = (
-                "QLabel {"
-                "background: rgba(255, 250, 245, 235);"
-                "color: rgb(45, 45, 45);"
-                "border: 1px solid rgba(120, 120, 120, 90);"
-                "border-radius: 8px;"
-                "padding: 6px 10px;"
-                "}"
-            )
-        self._dialog_bubble.setStyleSheet(style)
+    def _register_delete_combo(self) -> int:
+        self._delete_combo_count += 1
+        self._delete_combo_timer.start()
+        return self._delete_combo_count
+
+    def _reset_delete_combo(self) -> None:
+        self._delete_combo_count = 0
+
+    def _pending_trash_dir(self) -> Path:
+        path = Path.home() / ".deskpet_pending_delete"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _next_pending_trash_path(self, name: str) -> Path:
+        safe_name = name or "item"
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        base = self._pending_trash_dir() / f"{stamp}_{random.randrange(1000, 9999)}_{safe_name}"
+        return base
+
+    def _finalize_pending_delete_batch(self) -> None:
+        if not self._pending_delete_batch:
+            return
+        for _original_path, staged_path in self._pending_delete_batch:
+            try:
+                if staged_path.is_dir():
+                    shutil.rmtree(staged_path, ignore_errors=True)
+                elif staged_path.exists():
+                    staged_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        self._pending_delete_batch = []
+        self._pending_delete_timer.stop()
+
+    def _check_hourly_reminder(self) -> None:
+        if not self.settings.hourly_reminder_enabled:
+            return
+        now = datetime.now()
+        if now.minute != 0:
+            return
+        if self._last_hourly_reminder_hour == now.hour:
+            return
+        self._last_hourly_reminder_hour = now.hour
+        lines = [
+            "整点到啦，记得活动下肩颈~",
+            "新的整点，继续稳稳推进！",
+            "提醒：喝口水，休息 1 分钟。",
+        ]
+        self._show_dialogue(random.choice(lines), duration_ms=1600)
 
     def _change_mood(self, delta: int) -> None:
         self._mood_points = max(0, min(100, self._mood_points + delta))

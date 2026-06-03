@@ -60,6 +60,8 @@ class AppSettings:
     scale: float = DEFAULT_SCALE
     muted: bool = True
     cursor_sprite_mode: bool = False
+    total_deleted_count: int = 0
+    hourly_reminder_enabled: bool = False
 
 
 @dataclass(slots=True)
