@@ -64,6 +64,19 @@ class AppSettings:
     hourly_reminder_enabled: bool = False
     autostart_enabled: bool = False
     autostart_prompted: bool = False
+    total_click_count: int = 0
+    total_pet_count: int = 0
+    total_feed_count: int = 0
+    pomodoro_enabled: bool = False
+    pomodoro_focus_minutes: int = 25
+    pomodoro_break_minutes: int = 5
+    pomodoro_cycles_completed: int = 0
+    total_focus_seconds: int = 0
+    focus_panel_visible: bool = True
+    lucky_sign_last_date: str = ""
+    lucky_sign_last_text: str = ""
+    lucky_sign_total_count: int = 0
+    achievements_unlocked: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
